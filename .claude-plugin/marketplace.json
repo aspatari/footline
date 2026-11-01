@@ -1,0 +1,13 @@
+{
+  "name": "footline",
+  "owner": {
+    "name": "Artur Spatari"
+  },
+  "plugins": [
+    {
+      "name": "footline",
+      "source": "./",
+      "description": "A footer status line for Claude Code: branch, short model, effort, context fill, 5-hour and weekly limits, added directories"
+    }
+  ]
+}
