@@ -167,3 +167,17 @@ test('a reset already past, or none reported, draws no time', async ($, on) => {
   expect(/23% \S/.test(all)).toBe(false)
   expect(/81% \S/.test(all)).toBe(false)
 })
+
+test('a directory from /add-dir stays through /clear, which empties the session state', async ($, on) => {
+  let isCleared = false
+
+  seed(on)
+  ;(on as any)('state.get', { plugin: 'footline', key: 'sessionDirs' }, (_: unknown, e: unknown, next: (e: unknown) => unknown) =>
+    isCleared ? { value: {} } : next(e),
+  )
+
+  await $.classic.DirectoryAdded({ directory: '/work/lib-foo', source: 'slash_command' })
+  isCleared = true
+
+  expect((await draw($, 170)).all).toContain('+lib-foo')
+})

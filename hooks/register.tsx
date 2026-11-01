@@ -6,7 +6,10 @@ import type { Footline } from '../types'
 // The shape's tag: a line stored by an older version of this mod reads as null.
 const line = atom({ plugin: 'footline', key: 'line' } as const, null, { shape: 'line-3' })
 // What /add-dir added in this session; no call on $ answers it, only the event.
+// Kept twice, as the engine keeps the directories past both of these: the state
+// survives a reload of this module, the variable survives a /clear.
 const sessionDirs = atom({ plugin: 'footline', key: 'sessionDirs' } as const, [])
+let clearProofDirs: string[] = []
 
 const GIT_POLL_MS = 10_000
 const GIT_TIMEOUT_MS = 3_000
@@ -115,7 +118,7 @@ const refresh = async ($: EngineInterface) => {
     readGit($),
   ])
   const { effort: fromSettings, dirs: settingsDirs } = await readSettings($, model)
-  const addedDirs = [...new Set([...settingsDirs, ...(await read($, sessionDirs))])]
+  const addedDirs = [...new Set([...settingsDirs, ...(await read($, sessionDirs)), ...clearProofDirs])]
 
   if (fromSettings !== settingsEffort) {
     settingsEffort = fromSettings
@@ -183,6 +186,7 @@ export const register: Register = on => {
   })
 
   on('classic.DirectoryAdded', async ($, e, next) => {
+    clearProofDirs = [...clearProofDirs, e.directory]
     await update($, sessionDirs, dirs => [...(dirs ?? []), e.directory])
     await refresh($)
 
