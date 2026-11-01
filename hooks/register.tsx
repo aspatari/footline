@@ -4,7 +4,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import type { Footline } from '../types'
 
 // The shape's tag: a line stored by an older version of this mod reads as null.
-const line = atom({ plugin: 'footline', key: 'line' } as const, null, { shape: 'line-2' })
+const line = atom({ plugin: 'footline', key: 'line' } as const, null, { shape: 'line-3' })
 // What /add-dir added in this session; no call on $ answers it, only the event.
 const sessionDirs = atom({ plugin: 'footline', key: 'sessionDirs' } as const, [])
 
@@ -29,6 +29,21 @@ const shortModel = (model: string) => {
 }
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
+
+// Time left to a limit's reset: 30m, 3h, 3d5h. Minutes round up, so the last
+// minute reads 1m; nothing where the time has passed or is unknown.
+const timeLeft = (resetsAt: string | undefined, now: number) => {
+  const minutes = Math.ceil((Date.parse(resetsAt ?? '') - now) / 60_000)
+
+  if (!(minutes > 0)) {
+    return undefined
+  }
+
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+
+  return days > 0 ? `${days}d${hours > 0 ? `${hours}h` : ''}` : hours > 0 ? `${hours}h` : `${minutes}m`
+}
 
 const baseName = (path: string) => path.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || path
 
@@ -107,7 +122,8 @@ const refresh = async ($: EngineInterface) => {
     turnEffort = undefined
   }
 
-  const percent = (kind: string) => rateLimits.find(limit => limit.kind === kind)?.percentUsed
+  const now = await $.clock.now()
+  const limit = (kind: string) => rateLimits.find(candidate => candidate.kind === kind)
   const next: Footline = {
     model,
     effort: turnEffort ?? fromSettings,
@@ -116,8 +132,10 @@ const refresh = async ($: EngineInterface) => {
     addedDirs,
     tokens: context.tokens ?? 0,
     window: context.window,
-    fiveHour: percent('five_hour'),
-    week: percent('seven_day'),
+    fiveHour: limit('five_hour')?.percentUsed,
+    fiveHourLeft: timeLeft(limit('five_hour')?.resetsAt, now),
+    week: limit('seven_day')?.percentUsed,
+    weekLeft: timeLeft(limit('seven_day')?.resetsAt, now),
   }
 
   // Only a real change redraws: every open session polls this.
@@ -194,8 +212,8 @@ export const register: Register = on => {
       ? `${Math.round(contextPercent)}%`
       : `${shortCount(drawn.tokens)}/${shortCount(drawn.window)}`
     const limits = [
-      ...(drawn.fiveHour === undefined ? [] : [['5h', drawn.fiveHour] as const]),
-      ...(drawn.week === undefined ? [] : [['wk', drawn.week] as const]),
+      ...(drawn.fiveHour === undefined ? [] : [['5h', drawn.fiveHour, drawn.fiveHourLeft] as const]),
+      ...(drawn.week === undefined ? [] : [['wk', drawn.week, drawn.weekLeft] as const]),
     ]
     const branchText = drawn.branch ? `${clip(drawn.branch, isTiny ? 14 : 20)}${drawn.isDirty ? '*' : ''}` : ''
 
@@ -206,14 +224,14 @@ export const register: Register = on => {
       branchText && `\uE0A0 ${branchText}${count && ` ${count}`}`,
       `${shortModel(drawn.model)} ${drawn.effort ?? ''}`,
       `ctx ${contextValue}`,
-      ...limits.map(([label, percent]) => `${label} ${Math.round(percent)}%`),
+      ...limits.map(([label, percent, left]) => `${label} ${Math.round(percent)}%${left ? ` ${left}` : ''}`),
     ].join('  ').length
     const barsWidth = (limits.length + 1) * (BAR_CELLS + 1)
     const hasBars = columns >= FOOTER_LEFT + plain + barsWidth
     const names = dirNames(drawn.addedDirs)
     const showsNames = hasBars && columns >= FOOTER_LEFT + plain + barsWidth + names.length - count.length
 
-    const gauge = (label: string, percent: number, value: string) => {
+    const gauge = (label: string, percent: number, value: string, left?: string) => {
       const { filled, empty } = bar(percent)
 
       return (
@@ -223,6 +241,7 @@ export const register: Register = on => {
           {hasBars ? <Text color={heat(percent)}>{filled}</Text> : ''}
           {hasBars ? <Text dimColor>{empty} </Text> : ''}
           <Text color={heat(percent)}>{value}</Text>
+          {left ? <Text dimColor> {left}</Text> : ''}
         </Text>
       )
     }
@@ -253,7 +272,7 @@ export const register: Register = on => {
         </Text>
         {drawn.effort ? <Text key="effort" color="suggestion"> {drawn.effort}</Text> : ''}
         {gauge('ctx', contextPercent, contextValue)}
-        {limits.map(([label, percent]) => gauge(label, percent, `${Math.round(percent)}%`))}
+        {limits.map(([label, percent, left]) => gauge(label, percent, `${Math.round(percent)}%`, left))}
       </Text>
     )
   })

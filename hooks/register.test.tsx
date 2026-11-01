@@ -2,15 +2,20 @@ import { expect, test } from 'claude-code/testing'
 
 const GIT_DIRTY = '# branch.oid abcdef1234\n# branch.head feat-typed-settings\n1 .M N... 100644 100644 100644 a b file.ts\n'
 
-const seed = (on: any, { stdout = GIT_DIRTY, exitCode = 0, dirs = [] as string[] } = {}) => {
+const NOW = 1_800_000_000_000
+
+const seed = (
+  on: any,
+  { stdout = GIT_DIRTY, exitCode = 0, dirs = [] as string[], fiveHourResetsAt = undefined as string | undefined, weekResetsAt = undefined as string | undefined } = {},
+) => {
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', () => ({
     value: {
       startedAt: 0,
       context: { tokens: 620400, window: 1000000 },
       rateLimits: [
-        { kind: 'five_hour', percentUsed: 23.4 },
-        { kind: 'seven_day', percentUsed: 81 },
+        { kind: 'five_hour', percentUsed: 23.4, resetsAt: fiveHourResetsAt },
+        { kind: 'seven_day', percentUsed: 81, resetsAt: weekResetsAt },
         { kind: 'spend_limit', percentUsed: 5 },
       ],
     },
@@ -24,6 +29,7 @@ const seed = (on: any, { stdout = GIT_DIRTY, exitCode = 0, dirs = [] as string[]
   }))
   on('process.run', () => ({ value: { exitCode, stdout, stderr: '' } }))
   on('classic.DirectoryAdded', () => ({}))
+  on('clock.now', () => ({ value: NOW }))
   on('session.measure', (_: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
   on('ui.render', { component: 'SessionMode' }, ($: any, e: any) => {
     const { Text } = $.ui.resolve(e)
@@ -127,4 +133,37 @@ test('a long branch gives up the bars before the footer would wrap, a short one 
 
   expect((await draw($, 135)).all).not.toContain('━')
   expect((await draw($, 136)).all).toContain('━')
+})
+
+const MINUTE = 60_000
+const after = (minutes: number) => new Date(NOW + minutes * MINUTE).toISOString()
+
+test('each limit shows the time left to its reset: minutes, hours, days with hours', async ($, on) => {
+  seed(on, { fiveHourResetsAt: after(30), weekResetsAt: after((3 * 24 + 5) * 60) })
+
+  const { all } = await draw($, 170)
+
+  expect(all).toContain('23% 30m')
+  expect(all).toContain('81% 3d5h')
+})
+
+test('a whole number of days reads without hours, and hours without minutes', async ($, on) => {
+  seed(on, { fiveHourResetsAt: after(3 * 60 + 20), weekResetsAt: after(2 * 24 * 60) })
+
+  const { all } = await draw($, 170)
+
+  expect(all).toContain('23% 3h')
+  expect(all).not.toContain('3h20')
+  expect(all).toContain('81% 2d')
+  expect(all).not.toContain('2d0h')
+})
+
+test('a reset already past, or none reported, draws no time', async ($, on) => {
+  seed(on, { fiveHourResetsAt: after(-5) })
+
+  const { all } = await draw($, 170)
+
+  expect(all).toContain('23%')
+  expect(/23% \S/.test(all)).toBe(false)
+  expect(/81% \S/.test(all)).toBe(false)
 })

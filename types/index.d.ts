@@ -7,7 +7,9 @@ export type Footline = {
   tokens: number
   window: number
   fiveHour?: number
+  fiveHourLeft?: string
   week?: number
+  weekLeft?: string
 }
 
 declare module 'claude-code' {
