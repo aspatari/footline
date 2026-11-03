@@ -66,7 +66,7 @@ const dirNames = (dirs: readonly string[]) => {
   return [...shown, ...(rest > 0 ? [`+${rest}`] : [])].join(' ')
 }
 
-const PR_COLOR = { OPEN: 'success', DRAFT: 'inactive', MERGED: 'merged', CLOSED: 'error' } as const
+const PR_COLOR = { OPEN: 'success', DRAFT: 'inactive' } as const
 const CHECK = {
   pass: { glyph: '✓', color: 'success' },
   fail: { glyph: '✗', color: 'error' },
@@ -138,6 +138,9 @@ const REPO_FLAG = /(?:--repo|-R)[\s=]+(\S+)/
 
 let lastPrPoll = -Infinity
 let prsAreStale = true
+// Merged or closed: done with, so never drawn and never asked about again.
+let finished: string[] = []
+const keyOf = (ref: FootlinePrRef) => `${forgeOf(ref)} ${ref.repo}#${ref.number}`
 
 const samePr = (a: FootlinePrRef, b: FootlinePrRef) =>
   forgeOf(a) === forgeOf(b) && a.repo === b.repo && a.number === b.number
@@ -331,14 +334,23 @@ const refreshPrs = async ($: EngineInterface, branch: string | undefined) => {
   const onBranch = branch && home ? await viewPr($, home.forge) : undefined
   const next: FootlinePr[] = []
 
-  if (onBranch && home) next.push({ ...refOf(home.forge, home.repo, onBranch.number), ...onBranch, isBranch: true })
+  if (onBranch && home && onBranch.state === 'OPEN') {
+    next.push({ ...refOf(home.forge, home.repo, onBranch.number), ...onBranch, isBranch: true })
+  }
 
   for (const ref of touched) {
     if (next.length >= PRS_SHOWN) break
     if (next.some(pr => samePr(pr, ref))) continue
 
+    if (finished.includes(keyOf(ref))) continue
+
     const cached = known.find(pr => samePr(pr, ref))
-    const review = cached && cached.state !== 'OPEN' ? undefined : await viewPr($, forgeOf(ref), ref)
+    const review = await viewPr($, forgeOf(ref), ref)
+
+    if (review && review.state !== 'OPEN') {
+      finished = [...finished, keyOf(ref)]
+      continue
+    }
 
     if (review) next.push({ ...ref, ...review, isBranch: false })
     else if (cached) next.push({ ...cached, isBranch: false })
@@ -473,7 +485,7 @@ export const register: Register = on => {
         // Shown at once by number; the next tick of the poll fills in its state.
         await update($, prs, shown => [
           ...touched
-            .filter(ref => !(shown ?? []).some(pr => samePr(pr, ref)))
+            .filter(ref => !finished.includes(keyOf(ref)) && !(shown ?? []).some(pr => samePr(pr, ref)))
             .map(ref => ({ ...ref, url: '', state: 'OPEN' as const, isDraft: false, isBranch: false })),
           ...(shown ?? []),
         ].slice(0, PRS_SHOWN))
@@ -552,7 +564,7 @@ export const register: Register = on => {
       )
     }
 
-    const badgeColor = (pr: FootlinePr) => PR_COLOR[pr.isDraft && pr.state === 'OPEN' ? 'DRAFT' : pr.state]
+    const badgeColor = (pr: FootlinePr) => PR_COLOR[pr.isDraft ? 'DRAFT' : 'OPEN']
 
     // A row of parts: a Button (a badge) cannot sit inside a Text.
     return (

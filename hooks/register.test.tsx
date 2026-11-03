@@ -244,7 +244,7 @@ test('the branch pull request shows by number, coloured by its state, with its c
   expect(texts.find(t => t.text === '●')?.props.color).toBe('warning')
 })
 
-test('a pull request the session edits with gh shows even off its branch, a merged one in its colour', async ($, on) => {
+test('a pull request the session edits with gh shows even off its branch, and leaves once it is merged', async ($, on) => {
   ghPrs = { '392': gh(392, 'MERGED', [{ status: 'COMPLETED', conclusion: 'SUCCESS' }]) }
   messages = []
   toolText = ''
@@ -252,13 +252,11 @@ test('a pull request the session edits with gh shows even off its branch, a merg
   await start($)
   await $.tool.call({ tool: 'Bash', command: 'cd /w && gh pr edit 392 --body-file /tmp/b.md' })
 
-  expect((await draw($, 190)).all).toContain('#392')
-
   await start($)
   const { all, texts } = await draw($, 190)
 
-  expect(all).toContain('#392✓')
-  expect(texts.find(t => t.text === '#392')?.props.color).toBe('merged')
+  expect(all).not.toContain('#392')
+  expect(texts.length).toBeGreaterThan(0)
 })
 
 test('gh pr create is read from the address it prints, and failing checks show a cross', async ($, on) => {
@@ -327,9 +325,8 @@ test('glab mr commands add the merge requests they name or create, read with the
 
   remote = 'git@github.com:acme/shop.git'
   expect(all).toContain('!140✗')
-  expect(all).toContain('!131✓')
+  expect(all).not.toContain('!131')
   expect(all).not.toContain('99')
-  expect(texts.filter(t => t.text === '!131').at(-1)?.props.color).toBe('merged')
   expect(texts.filter(t => t.text === '!140').at(-1)?.props.color).toBe('inactive')
 })
 
@@ -370,4 +367,13 @@ test('pressing a badge opens its address in the browser', async ($, on) => {
 
   await ui.press({ key: 'open https://github.com/acme/shop/pull/392' })
   expect(opened).toContainEqual(['open', 'https://github.com/acme/shop/pull/392'])
+})
+
+test('a merged branch request is not drawn', async ($, on) => {
+  ghPrs = { branch: gh(512, 'MERGED', [{ status: 'COMPLETED', conclusion: 'SUCCESS' }]) }
+  messages = []
+  seed(on)
+  await start($)
+
+  expect((await draw($, 190)).all).not.toContain('#512')
 })

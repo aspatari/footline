@@ -48,7 +48,7 @@ In the desktop app, where `/plugin` does not run: click **+** next to the prompt
 | Part | Looks like | What it tells you |
 | --- | --- | --- |
 | **Branch** | `feat/checkout*` | The current branch, with `*` when the tree has changes. Refreshed every 10 seconds, so a switch from another terminal shows up too. |
-| **Pull and merge requests** | `#392✓` `!128●` | The current branch's PR (GitHub) or MR (GitLab), plus the ones this session made or worked on with `gh pr`, `glab mr` or a GitHub tool, even from another worktree. Green is open, grey a draft, purple merged, red closed; then `✓` checks or pipeline pass, `●` running, `✗` failing. Click one to open it in the browser. Up to three, refreshed every minute. |
+| **Pull and merge requests** | `#392✓` `!128●` | The current branch's PR (GitHub) or MR (GitLab), plus the ones this session made or worked on with `gh pr`, `glab mr` or a GitHub tool, even from another worktree. Open ones only: green, or grey for a draft; a merged or closed one leaves the row. Then `✓` checks or pipeline pass, `●` running, `✗` failing. Click one to open it in the browser. Up to three, refreshed every minute. |
 | **Added directories** | `+shared-ui +tokens` | What `/add-dir` and `permissions.additionalDirectories` added. Past three the rest are counted: `+one +two +three +2`. |
 | **Model and effort** | `opus 5.5 high` | The model, short. Effort comes from your settings, then from what the last turn really ran on. |
 | **Context** | `ctx ━──── 184k/1M` | How full the context window is. |
