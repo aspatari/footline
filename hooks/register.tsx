@@ -14,7 +14,7 @@ let clearProofDirs: string[] = []
 // worked on, kept the same two ways as the directories.
 const sessionPrs = atom({ plugin: 'footline', key: 'sessionPrs' } as const, [])
 let clearProofPrs: FootlinePrRef[] = []
-const prs = atom({ plugin: 'footline', key: 'prs' } as const, [], { shape: 'prs-1' })
+const prs = atom({ plugin: 'footline', key: 'prs' } as const, [], { shape: 'prs-2' })
 
 const GIT_POLL_MS = 10_000
 const GIT_TIMEOUT_MS = 3_000
@@ -121,50 +121,80 @@ const readSettings = async ($: EngineInterface, model: string) => {
   }
 }
 
-// What the settings said last, and what the last turn really ran on. A turn's
-// report wins (the engine may downgrade), until the settings move again.
-// A gh command that names or makes a pull request; the number is its argument.
+// Pull and merge requests: GitHub through gh, GitLab through glab. A GitHub
+// repository is `owner/name`; a GitLab one carries its host, `host/group/name`,
+// as glab's -R takes it.
+type Home = { forge: Forge; repo: string }
+type Forge = 'github' | 'gitlab'
+
+const forgeOf = (ref: { forge?: 'gitlab' }): Forge => ref.forge ?? 'github'
+
+// A command that names or makes one; the number is its own argument.
 const GH_PR = /\bgh\s+pr\s+(create|edit|merge|ready|view|checks|comment|review|close|reopen|diff)\b([^\n;&|]*)/
+const GLAB_MR = /\bglab\s+mr\s+(create|update|merge|view|note|approve|revoke|close|reopen|diff|checkout)\b([^\n;&|]*)/
 const PR_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/
-const REPO_FLAG = /(?:--repo|-R)[\s=]+([\w.-]+\/[\w.-]+)/
+const MR_URL = /https?:\/\/([\w.-]+\/[\w./-]+?)\/-\/merge_requests\/(\d+)/
+const REPO_FLAG = /(?:--repo|-R)[\s=]+(\S+)/
 
 let lastPrPoll = -Infinity
 let prsAreStale = true
 
-const samePr = (a: FootlinePrRef, b: FootlinePrRef) => a.repo === b.repo && a.number === b.number
+const samePr = (a: FootlinePrRef, b: FootlinePrRef) =>
+  forgeOf(a) === forgeOf(b) && a.repo === b.repo && a.number === b.number
 
-// What a finished tool call says about a pull request: Bash running gh pr, or
-// a GitHub MCP tool on one. `home` is the session's repository, for a bare number.
-export const prsTouched = (tool: string, input: Record<string, unknown>, text: string, home?: string) => {
+const refOf = (forge: Forge, repo: string, number: number): FootlinePrRef =>
+  forge === 'gitlab' ? { forge, repo, number } : { repo, number }
+
+// A GitLab -R names its project as a path, an address or with its host.
+const gitlabRepo = (flag: string, home?: Home) => {
+  const path = flag.replace(/^https?:\/\//, '').replace(/\.git$/, '')
+
+  return path.split('/').length > 2 || home?.forge !== 'gitlab' ? path : `${home.repo.split('/')[0]}/${path}`
+}
+
+// What a finished tool call says about a pull or merge request: Bash running
+// gh pr or glab mr, or a GitHub MCP tool on one. `home` answers a bare number.
+export const prsTouched = (tool: string, input: Record<string, unknown>, text: string, home?: Home) => {
   const found: FootlinePrRef[] = []
-  const add = (repo: string | undefined, number: number) => {
-    if (repo && number > 0) found.push({ repo, number })
-  }
 
   if (tool === 'Bash') {
-    const match = String(input.command ?? '').match(GH_PR)
+    const command = String(input.command ?? '')
 
-    if (!match) return found
+    for (const [forge, pattern, address] of [
+      ['github', GH_PR, PR_URL],
+      ['gitlab', GLAB_MR, MR_URL],
+    ] as const) {
+      const match = command.match(pattern)
 
-    // Only the command's own argument counts, never an address in its body.
-    const [, verb, rest = ''] = match
-    const argument = rest.match(/^\s+([^\s"']+)/)?.[1] ?? ''
-    const url = argument.match(PR_URL)
-    const number = argument.match(/^#?(\d+)$/)
+      if (!match) continue
 
-    if (url) add(url[1], Number(url[2]))
-    else if (number) add(rest.match(REPO_FLAG)?.[1] ?? home, Number(number[1]))
-    else if (verb === 'create') {
-      const made = text.match(PR_URL)
+      // Only the command's own argument counts, never an address in its body.
+      const [, verb, rest = ''] = match
+      const argument = rest.match(/^\s+([^\s"']+)/)?.[1] ?? ''
+      const url = argument.match(address)
+      const number = argument.match(/^[#!]?(\d+)$/)
+      const flag = rest.match(REPO_FLAG)?.[1]
+      const made = verb === 'create' ? text.match(address) : null
 
-      if (made) add(made[1], Number(made[2]))
+      if (url) found.push(refOf(forge, url[1]!, Number(url[2])))
+      else if (number) {
+        const repo = flag
+          ? forge === 'gitlab'
+            ? gitlabRepo(flag, home)
+            : flag
+          : home?.forge === forge
+            ? home.repo
+            : undefined
+
+        if (repo) found.push(refOf(forge, repo, Number(number[1])))
+      } else if (made) found.push(refOf(forge, made[1]!, Number(made[2])))
     }
   } else if (/pull_request/i.test(tool) && input.owner && input.repo) {
     const number = Number(input.pull_number ?? input.pullNumber ?? 0)
     const made = text.match(PR_URL)
 
-    if (number) add(`${input.owner}/${input.repo}`, number)
-    else if (made) add(made[1], Number(made[2]))
+    if (number) found.push(refOf('github', `${input.owner}/${input.repo}`, number))
+    else if (made) found.push(refOf('github', made[1]!, Number(made[2])))
   }
 
   return found
@@ -182,23 +212,24 @@ const remember = async ($: EngineInterface, refs: FootlinePrRef[]) => {
   return true
 }
 
-const readHome = async ($: EngineInterface) => {
+// The session's repository, from origin: github.com is GitHub, any other host
+// is taken for GitLab, which glab answers or leaves alone.
+const readHome = async ($: EngineInterface): Promise<Home | undefined> => {
   try {
     const { exitCode, stdout } = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: GIT_TIMEOUT_MS })
+    const match = exitCode === 0 ? stdout.trim().match(/^(?:\w+:\/\/)?(?:[^@/]+@)?([^/:]+)[:/](?:\d+\/)?(.+?)(?:\.git)?\/?$/) : null
 
-    return exitCode === 0 ? stdout.trim().match(/github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?$/)?.[1] : undefined
+    if (!match) return undefined
+
+    const [, host, path] = match
+
+    return host === 'github.com' ? { forge: 'github', repo: path! } : { forge: 'gitlab', repo: `${host}/${path}` }
   } catch {
     return undefined
   }
 }
 
-type GhPr = {
-  number: number
-  url: string
-  state: FootlinePr['state']
-  isDraft: boolean
-  statusCheckRollup?: { status?: string; conclusion?: string; state?: string }[]
-}
+type Review = Omit<FootlinePr, 'repo' | 'forge' | 'isBranch'>
 
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'ERROR'])
 
@@ -214,20 +245,75 @@ const checksOf = (rollup: GhPr['statusCheckRollup'] = []): FootlinePr['checks'] 
   return results.includes('fail') ? 'fail' : results.includes('pending') ? 'pending' : results.length ? 'pass' : undefined
 }
 
-const viewPr = async ($: EngineInterface, args: string[]) => {
-  try {
-    const { exitCode, stdout } = await $.process.run(
-      ['gh', 'pr', 'view', ...args, '--json', 'number,url,state,isDraft,statusCheckRollup'],
-      { timeoutMs: PR_TIMEOUT_MS },
-    )
+const PIPELINE: Record<string, FootlinePr['checks']> = {
+  success: 'pass',
+  failed: 'fail',
+  canceled: 'fail',
+  running: 'pending',
+  pending: 'pending',
+  created: 'pending',
+  preparing: 'pending',
+  scheduled: 'pending',
+  waiting_for_resource: 'pending',
+}
 
-    return exitCode === 0 ? (JSON.parse(stdout) as GhPr) : undefined
+type GhPr = {
+  number: number
+  url: string
+  state: FootlinePr['state']
+  isDraft: boolean
+  statusCheckRollup?: { status?: string; conclusion?: string; state?: string }[]
+}
+
+type GlabMr = {
+  iid: number
+  web_url: string
+  state: string
+  draft?: boolean
+  work_in_progress?: boolean
+  head_pipeline?: { status?: string } | null
+  pipeline?: { status?: string } | null
+}
+
+const run = async <T,>($: EngineInterface, argv: string[]) => {
+  try {
+    const { exitCode, stdout } = await $.process.run(argv, { timeoutMs: PR_TIMEOUT_MS })
+
+    return exitCode === 0 && stdout.trim().startsWith('{') ? (JSON.parse(stdout) as T) : undefined
   } catch {
+    // Not installed, not signed in, or no answer in time: nothing to show.
     return undefined
   }
 }
 
-// The badges to draw: the branch's pull request first, then the ones the session
+// One request's state; `ref` absent asks for the current branch's.
+const viewPr = async ($: EngineInterface, forge: Forge, ref?: FootlinePrRef): Promise<Review | undefined> => {
+  if (forge === 'github') {
+    const pr = await run<GhPr>($, [
+      'gh', 'pr', 'view',
+      ...(ref ? [String(ref.number), '--repo', ref.repo] : []),
+      '--json', 'number,url,state,isDraft,statusCheckRollup',
+    ])
+
+    return pr && { number: pr.number, url: pr.url, state: pr.state, isDraft: pr.isDraft, checks: checksOf(pr.statusCheckRollup) }
+  }
+
+  const mr = await run<GlabMr>($, ['glab', 'mr', 'view', ...(ref ? [String(ref.number), '-R', ref.repo] : []), '--output', 'json'])
+  const STATES: Record<string, FootlinePr['state']> = { opened: 'OPEN', merged: 'MERGED', closed: 'CLOSED', locked: 'CLOSED' }
+  const state = mr && STATES[mr.state]
+
+  return mr && state
+    ? {
+        number: mr.iid,
+        url: mr.web_url,
+        state,
+        isDraft: Boolean(mr.draft ?? mr.work_in_progress),
+        checks: PIPELINE[(mr.head_pipeline ?? mr.pipeline)?.status ?? ''],
+      }
+    : undefined
+}
+
+// The badges to draw: the branch's request first, then the ones the session
 // touched, newest first. A merged or closed one is final and not asked again.
 const refreshPrs = async ($: EngineInterface, branch: string | undefined) => {
   const now = await $.clock.now()
@@ -239,37 +325,30 @@ const refreshPrs = async ($: EngineInterface, branch: string | undefined) => {
 
   const home = await readHome($)
   const known = await read($, prs)
-  const touched = [...new Set([...(await read($, sessionPrs)), ...clearProofPrs].map(ref => `${ref.repo}#${ref.number}`))]
-    .map(key => ({ repo: key.split('#')[0]!, number: Number(key.split('#')[1]) }))
-  const onBranch = branch ? await viewPr($, []) : undefined
-  const badge = (repo: string, pr: GhPr, isBranch: boolean): FootlinePr => ({
-    repo,
-    number: pr.number,
-    url: pr.url,
-    state: pr.state,
-    isDraft: pr.isDraft,
-    checks: checksOf(pr.statusCheckRollup),
-    isBranch,
-  })
+  const touched = [...(await read($, sessionPrs)), ...clearProofPrs].filter(
+    (ref, i, all) => all.findIndex(other => samePr(other, ref)) === i,
+  )
+  const onBranch = branch && home ? await viewPr($, home.forge) : undefined
   const next: FootlinePr[] = []
 
-  if (onBranch && home) next.push(badge(home, onBranch, true))
+  if (onBranch && home) next.push({ ...refOf(home.forge, home.repo, onBranch.number), ...onBranch, isBranch: true })
 
   for (const ref of touched) {
     if (next.length >= PRS_SHOWN) break
     if (next.some(pr => samePr(pr, ref))) continue
 
     const cached = known.find(pr => samePr(pr, ref))
-    const isFinal = cached && cached.state !== 'OPEN'
-    const pr = isFinal ? undefined : await viewPr($, [String(ref.number), '--repo', ref.repo])
+    const review = cached && cached.state !== 'OPEN' ? undefined : await viewPr($, forgeOf(ref), ref)
 
-    if (pr) next.push(badge(ref.repo, pr, false))
+    if (review) next.push({ ...ref, ...review, isBranch: false })
     else if (cached) next.push({ ...cached, isBranch: false })
   }
 
   await update($, prs, previous => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next))
 }
 
+// What the settings said last, and what the last turn really ran on. A turn's
+// report wins (the engine may downgrade), until the settings move again.
 let settingsEffort: string | undefined
 let turnEffort: string | undefined
 
@@ -296,7 +375,7 @@ const refresh = async ($: EngineInterface, withPrs = false) => {
     branch: git.branch,
     isDirty: git.isDirty,
     addedDirs,
-    home,
+    home: home?.repo,
     tokens: context.tokens ?? 0,
     window: context.window,
     fiveHour: limit('five_hour')?.percentUsed,
@@ -328,7 +407,9 @@ export const register: Register = on => {
       )
     } catch {}
 
-    await refresh($, true)
+    // The line at once; the requests after it, as gh or glab can take seconds.
+    await refresh($)
+    refresh($, true).catch(() => {})
     // Another session or a shell can switch the branch of a shared checkout.
     poll?.cancel()
     poll = $.clock.every(GIT_POLL_MS, () => {
@@ -425,8 +506,9 @@ export const register: Register = on => {
     // Laid out by the row's real length: bars first go, then the names of the
     // directories, so the footer stays on one row as long as it can.
     const count = drawn.addedDirs.length > 0 ? `+${drawn.addedDirs.length}` : ''
-    // #392 for the session's own repository, name#12 for another one.
-    const prLabel = (pr: FootlinePr) => `${pr.repo === drawn.home ? '' : pr.repo.split('/')[1]}#${pr.number}`
+    // #392 or !128 for the session's own repository, name#12 for another one.
+    const prLabel = (pr: FootlinePr) =>
+      `${pr.repo === drawn.home ? '' : pr.repo.split('/').at(-1)}${pr.forge === 'gitlab' ? '!' : '#'}${pr.number}`
     const prsText = badges.map(pr => `${prLabel(pr)}${pr.checks ? '✓' : ''}`).join(' ')
     const plain = [
       branchText && `\uE0A0 ${branchText}${count && ` ${count}`}`,
@@ -483,7 +565,12 @@ export const register: Register = on => {
             {badges.map((pr, i) => (
               <Text key={`${pr.repo}#${pr.number}`}>
                 {i > 0 ? ' ' : ''}
-                <Text color={PR_COLOR[pr.isDraft && pr.state === 'OPEN' ? 'DRAFT' : pr.state]}>{prLabel(pr)}</Text>
+                {pr.url ? (
+                  <Text color={PR_COLOR[pr.isDraft && pr.state === 'OPEN' ? 'DRAFT' : pr.state]}>{prLabel(pr)}</Text>
+                ) : (
+                  // Just named by a tool; dim until the poll brings its state.
+                  <Text dimColor>{prLabel(pr)}</Text>
+                )}
                 {pr.checks ? <Text color={CHECK[pr.checks].color}>{CHECK[pr.checks].glyph}</Text> : ''}
               </Text>
             ))}

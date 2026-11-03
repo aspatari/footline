@@ -5,6 +5,16 @@ const GIT_DIRTY = '# branch.oid abcdef1234\n# branch.head feat-typed-settings\n1
 const NOW = 1_800_000_000_000
 
 let ghPrs: Record<string, unknown> = {}
+let glabMrs: Record<string, unknown> = {}
+let remote = 'git@github.com:acme/shop.git'
+
+const glab = (iid: number, state: string, pipeline?: string, draft = false) => ({
+  iid,
+  web_url: `https://git.example.com/team/shop/-/merge_requests/${iid}`,
+  state,
+  draft,
+  head_pipeline: pipeline ? { status: pipeline } : null,
+})
 let messages: unknown[] = []
 let toolText = ''
 
@@ -42,7 +52,12 @@ const seed = (
   on('process.run', (_: unknown, e: { argv: string[] }) => {
     const command = e.argv.join(' ')
 
-    if (command.startsWith('git remote')) return { value: { exitCode: 0, stdout: 'git@github.com:acme/shop.git\n', stderr: '' } }
+    if (command.startsWith('git remote')) return { value: { exitCode: 0, stdout: `${remote}\n`, stderr: '' } }
+    if (command.startsWith('glab mr view')) {
+      const mr = glabMrs[e.argv[3] && !e.argv[3].startsWith('-') ? `${e.argv[3]} ${e.argv[5] ?? ''}`.trim() : 'branch']
+
+      return { value: mr ? { exitCode: 0, stdout: JSON.stringify(mr), stderr: '' } : { exitCode: 1, stdout: '', stderr: 'no open merge request' } }
+    }
     if (command.startsWith('gh pr view')) {
       const pr = ghPrs[e.argv[3] && !e.argv[3].startsWith('--') ? e.argv[3] : 'branch']
 
@@ -74,7 +89,7 @@ const draw = async ($: any, columns: number) => {
     props: { modes: [] },
     viewport: { columns, rows: 40 },
   })
-  const texts = (await ui.findAll({ type: 'Text' })) as { text: string; props: { color?: string } }[]
+  const texts = (await ui.findAll({ type: "Text" })) as { text: string; props: { color?: string; dimColor?: boolean } }[]
 
   return { texts, all: texts.map(t => t.text).join('') }
 }
@@ -274,4 +289,66 @@ test('commands that only mention a pull request do not add it', async ($, on) =>
   await start($)
 
   expect((await draw($, 190)).all).not.toContain('#5')
+})
+
+test('on GitLab the branch merge request shows as !number with its pipeline', async ($, on) => {
+  remote = 'git@git.example.com:team/shop.git'
+  glabMrs = { branch: glab(128, 'opened', 'running') }
+  messages = []
+  seed(on)
+  await start($)
+  const { all, texts } = await draw($, 190)
+
+  remote = 'git@github.com:acme/shop.git'
+  expect(all).toContain('!128●')
+  expect(texts.filter(t => t.text === '!128').at(-1)?.props.color).toBe('success')
+})
+
+test('glab mr commands add the merge requests they name or create, read with the project glab needs', async ($, on) => {
+  remote = 'https://git.example.com/team/shop.git'
+  glabMrs = {
+    '131 git.example.com/team/shop': glab(131, 'merged', 'success'),
+    '140 git.example.com/team/shop': glab(140, 'opened', 'failed', true),
+  }
+  messages = []
+  toolText = 'https://git.example.com/team/shop/-/merge_requests/140\n'
+  seed(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'glab mr merge 131 --yes' })
+  await $.tool.call({ tool: 'Bash', command: 'glab mr create --fill --description "after !99"' })
+  await start($)
+  const { all, texts } = await draw($, 200)
+
+  remote = 'git@github.com:acme/shop.git'
+  expect(all).toContain('!140✗')
+  expect(all).toContain('!131✓')
+  expect(all).not.toContain('99')
+  expect(texts.filter(t => t.text === '!131').at(-1)?.props.color).toBe('merged')
+  expect(texts.filter(t => t.text === '!140').at(-1)?.props.color).toBe('inactive')
+})
+
+test('without glab, or signed out, a GitLab repository draws no badge and the rest stays', async ($, on) => {
+  remote = 'git@git.example.com:team/shop.git'
+  glabMrs = {}
+  messages = []
+  seed(on)
+  await start($)
+  const { all } = await draw($, 190)
+
+  remote = 'git@github.com:acme/shop.git'
+  expect(all).not.toContain('!')
+  expect(all).toContain('opus 5.5')
+})
+
+test('a request a tool just named is drawn dim until its state is read', async ($, on) => {
+  ghPrs = { '777': gh(777, 'MERGED') }
+  messages = []
+  toolText = ''
+  seed(on)
+  await $.tool.call({ tool: 'Bash', command: 'gh pr view 777' })
+  const { texts } = await draw($, 190)
+  const badge = texts.filter(t => t.text === '#777').at(-1)
+
+  expect(badge?.props.color).toBeUndefined()
+  expect(badge?.props.dimColor).toBe(true)
 })

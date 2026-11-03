@@ -13,7 +13,9 @@ export type Footline = {
   weekLeft?: string
 }
 
-export type FootlinePrRef = { repo: string; number: number }
+// A GitHub repository is owner/name, a GitLab one host/group/name; `forge` is
+// set for GitLab alone, so refs stored before it existed read as GitHub.
+export type FootlinePrRef = { forge?: 'gitlab'; repo: string; number: number }
 
 export type FootlinePr = FootlinePrRef & {
   url: string
