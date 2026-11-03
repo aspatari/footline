@@ -4,6 +4,18 @@ const GIT_DIRTY = '# branch.oid abcdef1234\n# branch.head feat-typed-settings\n1
 
 const NOW = 1_800_000_000_000
 
+let ghPrs: Record<string, unknown> = {}
+let messages: unknown[] = []
+let toolText = ''
+
+const gh = (number: number, state: string, rollup: unknown[] = [], isDraft = false) => ({
+  number,
+  url: `https://github.com/acme/shop/pull/${number}`,
+  state,
+  isDraft,
+  statusCheckRollup: rollup,
+})
+
 const seed = (
   on: any,
   { stdout = GIT_DIRTY, exitCode = 0, dirs = [] as string[], fiveHourResetsAt = undefined as string | undefined, weekResetsAt = undefined as string | undefined } = {},
@@ -27,8 +39,23 @@ const seed = (
       permissions: { additionalDirectories: dirs },
     },
   }))
-  on('process.run', () => ({ value: { exitCode, stdout, stderr: '' } }))
+  on('process.run', (_: unknown, e: { argv: string[] }) => {
+    const command = e.argv.join(' ')
+
+    if (command.startsWith('git remote')) return { value: { exitCode: 0, stdout: 'git@github.com:acme/shop.git\n', stderr: '' } }
+    if (command.startsWith('gh pr view')) {
+      const pr = ghPrs[e.argv[3] && !e.argv[3].startsWith('--') ? e.argv[3] : 'branch']
+
+      return { value: pr ? { exitCode: 0, stdout: JSON.stringify(pr), stderr: '' } : { exitCode: 1, stdout: '', stderr: 'no pull requests found' } }
+    }
+
+    return { value: { exitCode, stdout, stderr: '' } }
+  })
+  on('session.messages', () => ({ value: messages }))
+  on('tool.call', () => ({ result: {}, text: toolText }))
   on('classic.DirectoryAdded', () => ({}))
+  on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('clock.every', () => ({ value: undefined }))
   on('clock.now', () => ({ value: NOW }))
   on('session.measure', (_: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
   on('ui.render', { component: 'SessionMode' }, ($: any, e: any) => {
@@ -180,4 +207,71 @@ test('a directory from /add-dir stays through /clear, which empties the session 
   isCleared = true
 
   expect((await draw($, 170)).all).toContain('+lib-foo')
+})
+
+const start = ($: any) => $.session.start({ cwd: '/work/shop', source: 'startup' })
+
+test('the branch pull request shows by number, coloured by its state, with its checks', async ($, on) => {
+  ghPrs = { branch: gh(392, 'OPEN', [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { status: 'IN_PROGRESS' }]) }
+  messages = []
+  seed(on)
+  await start($)
+  const { all, texts } = await draw($, 190)
+
+  expect(all).toContain('#392●')
+  expect(texts.find(t => t.text === '#392')?.props.color).toBe('success')
+  expect(texts.find(t => t.text === '●')?.props.color).toBe('warning')
+})
+
+test('a pull request the session edits with gh shows even off its branch, a merged one in its colour', async ($, on) => {
+  ghPrs = { '392': gh(392, 'MERGED', [{ status: 'COMPLETED', conclusion: 'SUCCESS' }]) }
+  messages = []
+  toolText = ''
+  seed(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w && gh pr edit 392 --body-file /tmp/b.md' })
+
+  expect((await draw($, 190)).all).toContain('#392')
+
+  await start($)
+  const { all, texts } = await draw($, 190)
+
+  expect(all).toContain('#392✓')
+  expect(texts.find(t => t.text === '#392')?.props.color).toBe('merged')
+})
+
+test('gh pr create is read from the address it prints, and failing checks show a cross', async ($, on) => {
+  ghPrs = { '401': gh(401, 'OPEN', [{ status: 'COMPLETED', conclusion: 'FAILURE' }]) }
+  messages = []
+  toolText = 'https://github.com/acme/shop/pull/401\n'
+  seed(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'gh pr create --title x --body "see https://github.com/other/repo/pull/7"' })
+  await start($)
+  const { all } = await draw($, 190)
+
+  expect(all).toContain('#401✗')
+  expect(all).not.toContain('#7')
+})
+
+test('a resumed session finds the pull requests its earlier turns worked on', async ($, on) => {
+  ghPrs = { '388': gh(388, 'OPEN', [], true) }
+  messages = [{ role: 'assistant', text: '', toolUses: [{ tool_use_id: 't', tool: 'Bash', input: { command: 'gh pr view 388 --json url' } }] }]
+  seed(on)
+  await start($)
+  const { texts } = await draw($, 190)
+
+  expect(texts.filter(t => t.text === '#388').at(-1)?.props.color).toBe('inactive')
+})
+
+test('commands that only mention a pull request do not add it', async ($, on) => {
+  ghPrs = { '5': gh(5, 'OPEN') }
+  messages = []
+  toolText = 'https://github.com/acme/shop/pull/5'
+  seed(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'git log --oneline | grep "#5"' })
+  await start($)
+
+  expect((await draw($, 190)).all).not.toContain('#5')
 })

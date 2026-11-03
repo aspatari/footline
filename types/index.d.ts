@@ -4,6 +4,7 @@ export type Footline = {
   branch?: string
   isDirty: boolean
   addedDirs: string[]
+  home?: string
   tokens: number
   window: number
   fiveHour?: number
@@ -12,8 +13,18 @@ export type Footline = {
   weekLeft?: string
 }
 
+export type FootlinePrRef = { repo: string; number: number }
+
+export type FootlinePr = FootlinePrRef & {
+  url: string
+  state: 'OPEN' | 'MERGED' | 'CLOSED'
+  isDraft: boolean
+  checks?: 'pass' | 'fail' | 'pending'
+  isBranch: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'footline': { line: Shaped<Footline | null>; sessionDirs: string[] }
+    'footline': { line: Shaped<Footline | null>; sessionDirs: string[]; sessionPrs: FootlinePrRef[]; prs: Shaped<FootlinePr[]> }
   }
 }

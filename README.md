@@ -4,7 +4,7 @@
 
 **Everything you keep checking in Claude Code, on one row of the footer.**
 
-Branch, model, effort, context, and how long your limits have left.
+Branch and its pull requests, model, effort, context, and how long your limits have left.
 No extra rows, no script to run, nothing to configure.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-7aa2f7?style=flat-square)](LICENSE)
@@ -48,6 +48,7 @@ In the desktop app, where `/plugin` does not run: click **+** next to the prompt
 | Part | Looks like | What it tells you |
 | --- | --- | --- |
 | **Branch** | `feat/checkout*` | The current branch, with `*` when the tree has changes. Refreshed every 10 seconds, so a switch from another terminal shows up too. |
+| **Pull requests** | `#392✓` | The current branch's PR, plus the ones this session made or worked on with `gh pr` or a GitHub tool, even from another worktree. Green is open, grey a draft, purple merged, red closed; then `✓` checks pass, `●` running, `✗` failing. Up to three, refreshed every minute. |
 | **Added directories** | `+shared-ui +tokens` | What `/add-dir` and `permissions.additionalDirectories` added. Past three the rest are counted: `+one +two +three +2`. |
 | **Model and effort** | `opus 5.5 high` | The model, short. Effort comes from your settings, then from what the last turn really ran on. |
 | **Context** | `ctx ━──── 184k/1M` | How full the context window is. |
@@ -75,6 +76,7 @@ The row is laid out by its real length. When space runs out the directory names 
 - **Font.** The branch glyph (U+E0A0) needs a Powerline or Nerd Font. The shots use Iosevka Term Nerd Font.
 - **Limits** need a Claude subscription, and can appear only after the first response of a session.
 - **`--add-dir` isn't shown.** Claude Code doesn't tell a mod about directories given with that flag. `/add-dir` works, and those stay listed until the process ends.
+- **Pull requests** need the [GitHub CLI](https://cli.github.com) signed in. A PR from another repository shows as `name#12`.
 - **Footer labels.** footline draws its row where the footer's dim mode labels sit, and keeps their text in front of it.
 
 ## Develop
