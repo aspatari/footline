@@ -48,7 +48,7 @@ In the desktop app, where `/plugin` does not run: click **+** next to the prompt
 | Part | Looks like | What it tells you |
 | --- | --- | --- |
 | **Branch** | `feat/checkout*` | The current branch, with `*` when the tree has changes. Refreshed every 10 seconds, so a switch from another terminal shows up too. |
-| **Pull and merge requests** | `#392✓` `!128●` | The current branch's PR (GitHub) or MR (GitLab), plus the ones this session made or worked on with `gh pr`, `glab mr` or a GitHub tool, even from another worktree. Green is open, grey a draft, purple merged, red closed; then `✓` checks or pipeline pass, `●` running, `✗` failing. Up to three, refreshed every minute. |
+| **Pull and merge requests** | `#392✓` `!128●` | The current branch's PR (GitHub) or MR (GitLab), plus the ones this session made or worked on with `gh pr`, `glab mr` or a GitHub tool, even from another worktree. Green is open, grey a draft, purple merged, red closed; then `✓` checks or pipeline pass, `●` running, `✗` failing. Click one to open it in the browser. Up to three, refreshed every minute. |
 | **Added directories** | `+shared-ui +tokens` | What `/add-dir` and `permissions.additionalDirectories` added. Past three the rest are counted: `+one +two +three +2`. |
 | **Model and effort** | `opus 5.5 high` | The model, short. Effort comes from your settings, then from what the last turn really ran on. |
 | **Context** | `ctx ━──── 184k/1M` | How full the context window is. |
@@ -76,7 +76,7 @@ The row is laid out by its real length. When space runs out the directory names 
 - **Font.** The branch glyph (U+E0A0) needs a Powerline or Nerd Font. The shots use Iosevka Term Nerd Font.
 - **Limits** need a Claude subscription, and can appear only after the first response of a session.
 - **`--add-dir` isn't shown.** Claude Code doesn't tell a mod about directories given with that flag. `/add-dir` works, and those stay listed until the process ends.
-- **Pull and merge requests** need the [GitHub CLI](https://cli.github.com) or the [GitLab CLI](https://gitlab.com/gitlab-org/cli) signed in; without it they are simply left out. A repository on github.com is read with `gh`, any other host with `glab`, self-hosted GitLab included. One from another repository shows as `name#12`.
+- **Pull and merge requests** need the [GitHub CLI](https://cli.github.com) or the [GitLab CLI](https://gitlab.com/gitlab-org/cli) signed in; without it they are simply left out. A repository on github.com is read with `gh`, any other host with `glab`, self-hosted GitLab included. One from another repository shows as `name#12`. A click opens it in the fullscreen layout (`/tui fullscreen`), where Claude Code reports clicks, with `open` on macOS or `xdg-open` on Linux.
 - **Footer labels.** footline draws its row where the footer's dim mode labels sit, and keeps their text in front of it.
 
 ## Develop

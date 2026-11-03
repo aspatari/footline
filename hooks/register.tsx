@@ -349,6 +349,15 @@ const refreshPrs = async ($: EngineInterface, branch: string | undefined) => {
 
 // What the settings said last, and what the last turn really ran on. A turn's
 // report wins (the engine may downgrade), until the settings move again.
+// macOS has open, Linux xdg-open; whichever is there takes the address.
+const openInBrowser = async ($: EngineInterface, url: string) => {
+  for (const opener of ['open', 'xdg-open']) {
+    try {
+      if ((await $.process.run([opener, url], { timeoutMs: GIT_TIMEOUT_MS })).exitCode === 0) return
+    } catch {}
+  }
+}
+
 let settingsEffort: string | undefined
 let turnEffort: string | undefined
 
@@ -490,7 +499,7 @@ export const register: Register = on => {
       return next(e)
     }
 
-    const { Text } = $.ui.resolve(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
     const columns = e.viewport?.columns ?? UNMEASURED_COLUMNS
     const isTiny = columns < COMPACT_COLUMNS
     const contextPercent = drawn.window > 0 ? (drawn.tokens / drawn.window) * 100 : 0
@@ -520,9 +529,13 @@ export const register: Register = on => {
       .filter(Boolean)
       .join('  ').length
     const barsWidth = (limits.length + 1) * (BAR_CELLS + 1)
-    const hasBars = columns >= FOOTER_LEFT + plain + barsWidth
+    // On a GitHub branch with a PR the engine adds ` · PR #305` on the left.
+    const branchPr = badges.find(pr => pr.isBranch && pr.forge !== 'gitlab')
+    // and keeps a gap of its own between the two sides.
+    const left = FOOTER_LEFT + (branchPr ? ` · PR #${branchPr.number}`.length + 2 : 0)
+    const hasBars = columns >= left + plain + barsWidth
     const names = dirNames(drawn.addedDirs)
-    const showsNames = hasBars && columns >= FOOTER_LEFT + plain + barsWidth + names.length - count.length
+    const showsNames = hasBars && columns >= left + plain + barsWidth + names.length - count.length
 
     const gauge = (label: string, percent: number, value: string, left?: string) => {
       const { filled, empty } = bar(percent)
@@ -539,53 +552,60 @@ export const register: Register = on => {
       )
     }
 
+    const badgeColor = (pr: FootlinePr) => PR_COLOR[pr.isDraft && pr.state === 'OPEN' ? 'DRAFT' : pr.state]
+
+    // A row of parts: a Button (a badge) cannot sit inside a Text.
     return (
-      <Text>
-        {e.props.modes.length > 0 ? <Text dimColor>{e.props.modes.join(' & ')}{'  '}</Text> : ''}
-        {drawn.branch ? (
-          <Text key="branch" color="merged">
-            {'\uE0A0 '}
-            {clip(drawn.branch, isTiny ? 14 : 20)}
-            {drawn.isDirty ? <Text color="warning">*</Text> : ''}
-          </Text>
-        ) : (
-          ''
-        )}
-        {drawn.addedDirs.length > 0 ? (
-          <Text key="dirs" dimColor>
-            {drawn.branch ? ' ' : ''}
-            {showsNames ? names : count}
-          </Text>
-        ) : (
-          ''
-        )}
-        {drawn.branch || drawn.addedDirs.length > 0 ? '  ' : ''}
-        {badges.length > 0 ? (
-          <Text key="prs">
-            {badges.map((pr, i) => (
-              <Text key={`${pr.repo}#${pr.number}`}>
-                {i > 0 ? ' ' : ''}
-                {pr.url ? (
-                  <Text color={PR_COLOR[pr.isDraft && pr.state === 'OPEN' ? 'DRAFT' : pr.state]}>{prLabel(pr)}</Text>
-                ) : (
-                  // Just named by a tool; dim until the poll brings its state.
-                  <Text dimColor>{prLabel(pr)}</Text>
-                )}
-                {pr.checks ? <Text color={CHECK[pr.checks].color}>{CHECK[pr.checks].glyph}</Text> : ''}
-              </Text>
-            ))}
-            {'  '}
-          </Text>
-        ) : (
-          ''
-        )}
-        <Text key="model" color="planMode" weight="bold">
-          {shortModel(drawn.model)}
+      <Box flexDirection="row" flexShrink={0}>
+        <Text key="head">
+          {e.props.modes.length > 0 ? <Text dimColor>{e.props.modes.join(' & ')}{'  '}</Text> : ''}
+          {drawn.branch ? (
+            <Text key="branch" color="merged">
+              {'\uE0A0 '}
+              {clip(drawn.branch, isTiny ? 14 : 20)}
+              {drawn.isDirty ? <Text color="warning">*</Text> : ''}
+            </Text>
+          ) : (
+            ''
+          )}
+          {drawn.addedDirs.length > 0 ? (
+            <Text key="dirs" dimColor>
+              {drawn.branch ? ' ' : ''}
+              {showsNames ? names : count}
+            </Text>
+          ) : (
+            ''
+          )}
+          {drawn.branch || drawn.addedDirs.length > 0 ? '  ' : ''}
         </Text>
-        {drawn.effort ? <Text key="effort" color="suggestion"> {drawn.effort}</Text> : ''}
-        {gauge('ctx', contextPercent, contextValue)}
-        {limits.map(([label, percent, left]) => gauge(label, percent, `${Math.round(percent)}%`, left))}
-      </Text>
+        {badges.map((pr, i) => [
+          pr.url ? (
+            // A click opens it in the browser. A Button, not a Link: where the
+            // engine does not trust the terminal with OSC 8 (herdr, tmux), a
+            // Link draws its whole address after the text.
+            <Button key={`open ${pr.url}`} plain onPress={() => openInBrowser($, pr.url)}>
+              <Text color={badgeColor(pr)}>{prLabel(pr)}</Text>
+            </Button>
+          ) : (
+            // Just named by a tool; dim until the poll brings its state.
+            <Text key={`named ${pr.repo}#${pr.number}`} dimColor>
+              {prLabel(pr)}
+            </Text>
+          ),
+          <Text key={`after ${pr.repo}#${pr.number}`}>
+            {pr.checks ? <Text color={CHECK[pr.checks].color}>{CHECK[pr.checks].glyph}</Text> : ''}
+            {i === badges.length - 1 ? '  ' : ' '}
+          </Text>,
+        ])}
+        <Text key="tail">
+          <Text key="model" color="planMode" weight="bold">
+            {shortModel(drawn.model)}
+          </Text>
+          {drawn.effort ? <Text key="effort" color="suggestion"> {drawn.effort}</Text> : ''}
+          {gauge('ctx', contextPercent, contextValue)}
+          {limits.map(([label, percent, left]) => gauge(label, percent, `${Math.round(percent)}%`, left))}
+        </Text>
+      </Box>
     )
   })
 }

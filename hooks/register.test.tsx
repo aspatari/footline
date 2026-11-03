@@ -4,6 +4,7 @@ const GIT_DIRTY = '# branch.oid abcdef1234\n# branch.head feat-typed-settings\n1
 
 const NOW = 1_800_000_000_000
 
+const opened: string[][] = []
 let ghPrs: Record<string, unknown> = {}
 let glabMrs: Record<string, unknown> = {}
 let remote = 'git@github.com:acme/shop.git'
@@ -52,6 +53,11 @@ const seed = (
   on('process.run', (_: unknown, e: { argv: string[] }) => {
     const command = e.argv.join(' ')
 
+    if (e.argv[0] === 'open') {
+      opened.push([...e.argv])
+
+      return { value: { exitCode: 0, stdout: '', stderr: '' } }
+    }
     if (command.startsWith('git remote')) return { value: { exitCode: 0, stdout: `${remote}\n`, stderr: '' } }
     if (command.startsWith('glab mr view')) {
       const mr = glabMrs[e.argv[3] && !e.argv[3].startsWith('-') ? `${e.argv[3]} ${e.argv[5] ?? ''}`.trim() : 'branch']
@@ -351,4 +357,17 @@ test('a request a tool just named is drawn dim until its state is read', async (
 
   expect(badge?.props.color).toBeUndefined()
   expect(badge?.props.dimColor).toBe(true)
+})
+
+test('pressing a badge opens its address in the browser', async ($, on) => {
+  opened.length = 0
+  ghPrs = { branch: gh(392, 'OPEN') }
+  messages = []
+  seed(on)
+  await start($)
+  await draw($, 190)
+  const ui = await $.ui.mount({ plugin: 'footline', surface: 'terminal', component: 'SessionMode', props: { modes: [] }, viewport: { columns: 190, rows: 40 } })
+
+  await ui.press({ key: 'open https://github.com/acme/shop/pull/392' })
+  expect(opened).toContainEqual(['open', 'https://github.com/acme/shop/pull/392'])
 })
